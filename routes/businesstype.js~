@@ -1,0 +1,254 @@
+var OracleDB = require('../oracleDB.js').OracleDB;
+var oracle = require('oracle');
+var db = new OracleDB();
+var Iconv = require('iconv-lite');
+var async = require('async');
+//录单 业务类型
+exports.test = function (req, res, next) {
+    db.connection.execute("select ORIGREC, DESCRIPTION, BUSTYPE from BUSINESSTYPE", [], function (err, results) {
+        if (err) { console.log("Error executing query:", err); return; }
+
+        var gbkBytes = Iconv.encode(JSON.stringify(results), 'UTF-8');
+
+        //console.log(gbkBytes.toString());
+        //res.render('index.html',{res:gbkBytes}); 
+        res.json(gbkBytes.toString());
+    });
+
+}
+//录单 获取科室 
+exports.getKS = function (req, res, next) {
+    db.connection.execute("select '' as Text, '' as Value from dual union all select  concat(lower(MEM),CLINICDEPT) as Text,CLINICDEPT as Value from CLINICDEPT",
+     [], function (err, results) {
+         if (err) { console.log("Error executing query:", err); return; }
+         var gbkBytes = Iconv.encode(JSON.stringify(results), 'UTF-8');
+
+         res.json(gbkBytes.toString());
+     });
+}
+
+//录单 送检医生 
+exports.getDoctor = function (req, res, next) {
+    db.connection.execute("select SENDDOCTORS from RASCLIENTS where RASCLIENTID='吴江市第一人民医院'",
+     [], function (err, results) {
+         if (err) { console.log("Error executing query:", err); return; }
+         var gbkBytes = Iconv.encode(JSON.stringify(results), 'UTF-8');
+
+         var arrs = JSON.parse(gbkBytes.toString())[0].SENDDOCTORS.split(',');
+
+         var result = "[";
+         for (var i = 0; i < arrs.length; i++) {
+
+             result += '{"VALUE":"' + arrs[i] + '","TEXT":"' + arrs[i] + '"},';
+         }
+         result = result.substr(0, result.length - 1);
+         result += "]";
+         res.json(result);
+     });
+}
+
+
+//录单 获取基本类型
+exports.getBasicType = function (req, res, next) {
+    db.connection.execute("select  t.text from DA_DICT t WHERE T.CLASS='样本类型' AND T.SORT>-1 group by t.text",
+     [], function (err, results) {
+         if (err) { console.log("Error executing query:", err); return; }
+         var gbkBytes = Iconv.encode(JSON.stringify(results), 'UTF-8');
+         res.json(gbkBytes.toString());
+     });
+}
+
+
+//获取送检 单位
+exports.getSJDW = function (req, res, next) {
+    var query = req.query.q.replace(/(^\s*)|(\s*$)/g, "");
+    var sql = "select RASCLIENTID , SHORTNAME,COMPNAME    from RASCLIENTS";
+    sql += "  where RASCLIENTID not in ('ABLABS','**NEW**','Internal') and  DEPT = '杭州迪安'	";
+    if (query != "") {
+        sql += " and RASCLIENTID like'%" + query + "%' or SHORTNAME like '" + query + "%'";
+    }
+    sql+="  and rownum<="+req.query.max;
+    db.connection.execute(sql,
+     [], function (err, results) {
+         if (err) { console.log("Error executing query:", err); return; }
+         var gbkBytes = Iconv.encode(JSON.stringify(results), 'UTF-8');
+         res.json(gbkBytes.toString());
+     });
+}
+
+
+
+exports.getOneSample = function (req, res, next) {
+	
+    var barcode = req.query.barcode; 
+    var sql="select origrec,samplefrom,sampleto,bussinesstype,barcode,to_char(collectddate,'yyyy-mm-dd hh24:mi:ss') collectddate,";
+				sql+="senddate,samplestatus,createdby,createddate,status,dept,sendtime from  patientinformation where  barcode='"+barcode+"'";
+
+    db.connection.execute(sql,
+     [], function (err, results) {
+         if (err) { console.log("Error executing query:", err); return; }
+         var gbkBytes = Iconv.encode(JSON.stringify(results), 'UTF-8');
+         res.json(gbkBytes.toString());
+     });
+}
+
+
+//获取样品列表
+exports.getSampleList = function (req, res, next) {
+
+	var count="(select count(0) from PATIENTINFORMATION p left join USERS u on u.USRNAM = p.CREATEDBY ";
+	count+=" where p.ispathology='N' and p.CREATEDBY =:1 and p.STATUS =:2 and  p.DEPT =:3 ) as COUNT"
+    db.connection.execute("select p.ORIGREC,p.BARCODE,p.STATUS,u.FULLNAME,p.CREATEDDATE,"+count
+		  +" from PATIENTINFORMATION p left join USERS u on u.USRNAM = p.CREATEDBY " 
+			+" where p.ispathology='N' and p.CREATEDBY =:1 and p.STATUS =:2 and  p.DEPT =:3 "
+			+" order by u.FULLNAME ASC,p.ORIGREC ASC ",
+     ['HUANGCHAO','新建','杭州迪安'], function (err, results) {
+         if (err) { console.log("Error executing query:", err); return; }
+         
+         var json="";
+         json+="{";
+      	json+='"total":1,';
+      	json+='"rows":';
+      	json+="[";
+      
+       for(var i in results){
+        	   json+="{";
+        	   json+="\"ORIGREC\":\""+results[i].ORIGREC+"\",\"BARCODE\":\""+results[i].BARCODE+"\",\"FULLNAME\":\""+results[i].FULLNAME+"\",\"COUNT\":\""+results[i].COUNT+"\"";
+        		json+="},";
+        }
+        json=json.substr (0,json.length-1)
+         	json+="]";
+         json+="}";
+         res.send(json);
+     });
+}
+ 
+			
+//获取套餐列表
+exports.getSampleGroupList = function (req, res, next) {
+	var id=req.query.origrec;
+	var sql="select ORIGREC, SAMPLETYPE, STRREPORTTIME, PATIENTORIGREC, SERVGRP, ";
+	sql+=" TESTCODE, TESTNO,EQID,TESTCOMEFROM,CODE,RPAD(COMBOTESTNAME, 60, '…')||'【 '||SAMPLETYPE||' 】' COMBOTESTNAME,ISSPLITED,"
+	sql+="DEPT,SPLITNO,TO_CHAR(CONTRACTPRICE,'FM9999999.0099') as CONTRACTPRICE,";
+	sql+="TO_CHAR(FINALPRICE,'FM9999999.0099') as FINALPRICE ";
+	sql+="from PATIENTTESTS where PATIENTORIGREC='"+id+"'"
+    db.connection.execute(sql,
+     [], function (err, results) {
+         if (err) { console.log("Error executing query:", err); return; }
+         var json="";
+         json+="{";
+      	json+='"total":1,';
+      	json+='"rows":';
+      	json+="[";
+      
+       for(var i in results){
+        	 json+="{";
+        	 json+="\"ORIGREC\":\""+results[i].ORIGREC+"\",\"SAMPLETYPE\":\""+results[i].SAMPLETYPE+"\",\"STRREPORTTIME\":\""+results[i].STRREPORTTIME+"\"";
+        	 json+=",\"PATIENTORIGREC\":\""+results[i].PATIENTORIGREC+"\",\"SERVGRP\":\""+results[i].SERVGRP+"\",\"TESTCODE\":\""+results[i].TESTCODE+"\"";
+        	 json+=",\"TESTNO\":\""+results[i].TESTNO+"\",\"EQID\":\""+results[i].EQID+"\",\"TESTCOMEFROM\":\""+results[i].TESTCOMEFROM+"\"";
+        	 json+=",\"CODE\":\""+results[i].CODE+"\",\"COMBOTESTNAME\":\""+results[i].COMBOTESTNAME+"\",\"ISSPLITED\":\""+results[i].ISSPLITED+"\"";
+        	 json+=",\"DEPT\":\""+results[i].DEPT+"\",\"SPLITNO\":\""+results[i].SPLITNO+"\",\"CONTRACTPRICE\":\""+results[i].CONTRACTPRICE+"\"";
+        	  json+=",\"FINALPRICE\":\""+results[i].FINALPRICE+"\"";
+        	 json+="},";
+        }
+        json=json.substr (0,json.length-1)
+         	json+="]";
+         json+="}";
+         res.json(json);
+     });
+}
+
+exports.getBasicTypeInfo = function (req, res, next) {
+
+    db.connection.execute("select T.DESCRIPTION FROM DA_DICT T WHERE T.CLASS='样本类型' AND T.SORT>-1 and t.text='" + unescape(req.query.fiter) + "'",
+     [], function (err, results) {
+         if (err) { console.log("Error executing query:", err); return; }
+         var gbkBytes = Iconv.encode(JSON.stringify(results), 'UTF-8');
+         res.json(gbkBytes.toString());
+     });
+}
+
+//检查送检单位
+exports.CheckSJDW = function (req, res, next) {
+
+    db.connection.execute("select count(0)  count from RASCLIENTS where RASCLIENTID='"+unescape(req.query.q)+"'",
+     [], function (err, results) {
+         if (err) { console.log("Error executing query:", err); return; }
+         res.json(results[0].COUNT);
+     });
+}
+
+
+//条码检查
+exports.CheckBarCode = function (req, res, next) {
+
+    var json = "";
+    var code = req.query.barcode;
+    async.waterfall([
+            function (cb) {
+                db.connection.execute("select distinct BARCODELENTH from CONFIGURATIONS", [], function (err, results) {
+                    if (err) { console.log("Error executing query:", err); return; }
+                    cb(null, results[0].BARCODELENTH);
+                });
+            },
+        function (n, cb) {
+            if (code.length < n) {
+                res.json('长度不够');
+            } else {
+                db.connection.execute("select count(0) count  from patientinformation where barcode='" + code + "'", [], function (err, results) {
+                    if (err) { console.log("Error executing query:", err); return; }
+                    cb(null, results[0].COUNT);鞍山市第二医院
+                });
+            }
+        },
+        function (n, cb) {
+            if (n >= 1) {
+                res.json("条码已存在!")
+            } else {
+            	var date=new Date();
+                 db.connection.execute("insert into patientinformation(sampleto,bussinesstype,barcode,collectddate,senddate,samplestatus,createdby,createddate,status,dept)"
+                 +" values(:1,:2,:3,:4,:5,:6,:7,:8,:9,:10)",['杭州迪安','常规检测业务','123456533',new Date(),new Date(),'外观正常','HUANGCHAO',new Date(),'新建','杭州迪安'],
+                  function (err, results) {
+                    if (err) { console.log("Error executing query:", err); 
+                    return res.json("插入数据错误:"+err) }
+                    		res.json(results.updateCount)
+                });
+            }
+        }
+    ], function (err, result) {
+        console.log(err);
+        console.log(result)
+    });
+}
+
+
+//修改 sample到送检单位
+exports.updateSJDW = function (req, res, next) {
+
+var sjdw=req.query.sjdw;
+var barcode=req.query.barcode;
+var sql="update patientinformation set SAMPLEFROM='"+sjdw+"',COMPNAME='"+sjdw+"'";
+			sql+="where barcode='"+barcode+"'";
+			console.log(sql);
+    db.connection.execute(sql,
+     [], function (err, results) {
+         if (err) { console.log("Error executing query:", err); return; }
+         res.json(results.updateCount);
+     });
+}
+
+
+//修改sample 到接收时间
+exports.updateJSSJ = function (req, res, next) {
+
+var jssj=req.query.jssj;
+var barcode=req.query.barcode;
+var sql="update patientinformation set collectddate=to_date(to_char(collectddate,'yyyy-mm-dd')||' '||'"+jssj+"','yyyy-mm-dd hh24:mi:ss')";
+			sql+="where barcode='"+barcode+"'";
+    db.connection.execute(sql,
+     [], function (err, results) {
+         if (err) { console.log("Error executing query:", err); return; }
+         res.json(results.updateCount);
+     });
+}
+
