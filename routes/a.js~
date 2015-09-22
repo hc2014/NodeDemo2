@@ -1,0 +1,19 @@
+var OracleDB = require('../oracleDB.js').OracleDB;
+var oracle = require('oracle');
+var db = new OracleDB();
+var Iconv = require('iconv-lite');
+
+exports.test=function(req, res, next){
+	db.connection.execute("select ORIGREC, DESCRIPTION, BUSTYPE from BUSINESSTYPE", [], function(err, results) {
+        if (err) { console.log("Error executing query:", err); return; }
+
+	var gbkBytes = Iconv.encode(JSON.stringify(results),'UTF-8');
+
+	//console.log(gbkBytes.toString());
+	//res.render('index.html',{res:gbkBytes}); 
+	res.json(gbkBytes);
+    });
+	
+}
+
+
